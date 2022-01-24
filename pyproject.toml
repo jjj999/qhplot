@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "qhplot"
+version = "0.1.0"
+description = ""
+authors = ["jjj999"]
+
+[tool.poetry.dependencies]
+python = ">=3.8,<3.11"
+click = "^8.0.1"
+matplotlib = "^3.4.3"
+numpy = "^1.21.2"
+pydantic = "^1.8.2"
+PyYAML = "^5.4.1"
+
+[tool.poetry.dev-dependencies]
+ipykernel = "^6.4.1"
+
+[tool.poetry.scripts]
+qhplot = "qhplot.cli:main"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

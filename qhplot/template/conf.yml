@@ -1,0 +1,24 @@
+ohmic:
+  plots:
+    - file_V: data/hoge/V.txt
+      file_I: data/hoge/I.txt
+      # color: blue
+      # label: 1to2
+      # remove_offset: true
+  img:
+    output: images/output.png
+    # dpi: 300
+    # tight: true
+  # fontsize: 15
+  # title: 1to2
+  # xaxis:
+  # fontsize_xaxis:
+  # yaxis:
+  # fontsize_yaxis:
+  # scale_V: mili
+  # scale_I: micro
+  # raw_scale_V: none
+  # raw_scale_I: none
+  # show_legend: true
+  # output_offset:
+  # offset_tolerance:
