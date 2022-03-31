@@ -8,13 +8,25 @@ import numpy as np
 
 from .const import hc
 from .function import gaussian_dist
-from .util import change_suffix
+from .util import (
+    change_suffix,
+    smooth_outliers,
+)
 
 
 def load_raw_data(
     file: t.Union[str, Path],
     save_npy: bool = True,
 ) -> np.ndarray:
+    """Load given file and generate a Ndarray of the data.
+
+    Args:
+        file: Path to a file with experimental data.
+        save_npy: Whether the function creates new npy files from given data.
+
+    Returns:
+        Ndarray of the data.
+    """
     if isinstance(file, str):
         file = Path(file)
 
@@ -47,94 +59,127 @@ def _get_matching_range(
 
 class SPData:
 
-    @classmethod
-    def cosmic_remove_calc(
-        cls,
-        counts: np.ndarray,
-        threshold: int,
-    ) -> np.ndarray:
-        # TODO understand the code.
-        indices, = np.where(np.abs(np.gradient(counts)) >= threshold)
-        L=[]
-        Ls=[]
-        if indices.shape[0]>0:
-            for n in range(indices.shape[0]-1):
-                i1=indices[n]
-                i2=indices[n+1]
-                if (i2-i1)<=3:
-                    Ls.append(i1)
-                else:
-                    Ls.append(i1)
-                    L.append(Ls)
-                    Ls=[]
-            Ls.append(indices[-1])
-        if len(Ls)>0:
-            L.append(Ls)
-
-        for l in L:
-            min_l = min(l)
-            max_l = max(l)
-            avg=(counts[min_l - 1] + counts[max_l + 1]) / 2
-            arg=np.arange(min_l,max_l+1)
-            for i in arg:
-                counts[i]=avg
-        return counts
-
     @staticmethod
     def load(
         file_wavelength: t.Union[str, Path],
         file_counts: t.Union[str, Path],
         save_npy: bool = True,
     ) -> SPData:
+        """Load given files and generate new SPData object.
+
+        Args:
+            file_wavelength: Path to a file with wavelength profile.
+            file_counts: Path to a file with CCD data.
+            save_npy: Whether the function creates new npy files from given
+                data.
+
+        Returns:
+            New SPData object with given data.
+        """
         return SPData(
             load_raw_data(file_wavelength, save_npy=save_npy),
             load_raw_data(file_counts, save_npy=save_npy)
         )
 
     def __init__(self, wavelength: np.ndarray, counts: np.ndarray) -> None:
+        """
+        Args:
+            wavelength: wavelength profile of a measurement.
+            counts: 2-D array of CCD data.
+        """
         self._wavelength = wavelength
         self._counts = counts
 
     @property
     def wavelength(self) -> np.ndarray:
+        """Wavelength profile of the data."""
         return self._wavelength
 
     @cached_property
     def energy(self) -> np.ndarray:
+        """Energy profile of the data."""
         return hc / (self._wavelength + 1e-12)
 
     @property
     def counts(self) -> np.ndarray:
+        """CCD counts of the data."""
         return self._counts
 
     @property
     def num_pixels(self) -> int:
+        """Number of CCD pixels."""
         return len(self.wavelength)
 
     @property
     def num_measure(self) -> int:
+        """Number of exposure times."""
         return len(self.counts)
 
     def remove_darkcounts(self, darkcounts: int) -> SPData:
+        """Remove dark counts from the data.
+
+        Args:
+            darkcounts: counts to be subtracted.
+
+        Returns:
+            New SPData object with same wavelength data and processed
+            counts data.
+        """
         return SPData(self.wavelength, self.counts - darkcounts)
 
-    def remove_cosmic_noise(self) -> SPData:
-        counts_filtered = np.zeros_like(self.counts)
-        for i in range(counts_filtered.shape[0]):
-            counts_filtered[i, :] = self.cosmic_remove_calc(self.counts[i, :], 200)
+    def remove_cosmic_noise(self, threshold: int, closeness: int = 3) -> SPData:
+        """Remove effects of cosmic rays.
 
-        return SPData(self.wavelength, counts_filtered)
+        Args:
+            threshld: Threshold to judge each count are caused by cosmic rays.
+            closeness: Width between indices that represents how close each
+                index are.
 
-    def broad_fringe(self, std: float) -> SPData:
+        Returns:
+            New SPData object with same wavelength data and processed
+            counts data.
+        """
+        counts_cosmic_removed = np.apply_along_axis(
+            smooth_outliers,
+            1,
+            self.counts,
+            threshold,
+            closeness,
+        )
+        return SPData(self.wavelength, counts_cosmic_removed)
+
+    def filter_gaussian(self, mean: float, std: float) -> SPData:
+        """Apply Gaussian filter to each spectrum for smoothing.
+
+        Args:
+            mean: Mean of the Gaussian.
+            std: Standard deviation of the Gaussian.
+
+        Returns:
+            New SPData object with same wavelength data and processed
+            counts data.
+        """
         x = np.arange(self.counts.shape[1])
-        y = gaussian_dist(x, 669.5, std)
-        counts = np.array([
-            np.convolve(self.counts[n, :], y, mode="same")
-            for n in range(self.num_measure)
-        ])
+        y = gaussian_dist(x, mean, std)
+        counts = np.apply_along_axis(
+            np.convolve,
+            1,
+            self.counts,
+            y,
+            mode="same",
+        )
         return SPData(self.wavelength, counts)
 
     def crop_pixel(self, min_: int, max_: int) -> SPData:
+        """Crop a range of pixels.
+
+        Args:
+            min_: Minimal pixel value of the range.
+            max_: Maximal pixel value of the range.
+
+        Returns:
+            New SPData object with the cropped data.
+        """
         _check_min_max(min_, max_)
         return SPData(
             self.wavelength[min_:max_ + 1],
@@ -142,21 +187,66 @@ class SPData:
         )
 
     def crop_wavelength(self, min_: float, max_: float) -> SPData:
+        """Crop a range of wavelength.
+
+        Args:
+            min_: Minimal wavelength of the range.
+            max_: Maximal wavelength of the range.
+
+        Returns:
+            New SPData object with the cropped data.
+        """
         _check_min_max(min_, max_)
         indices = _get_matching_range(self.wavelength, min_, max_)
         return SPData(self.wavelength[indices], self.counts[:, indices])
 
     def crop_energy(self, min_: float, max_: float) -> SPData:
+        """Crop a range of energy.
+
+        Args:
+            min_: Minimal energy of the range.
+            max_: Maximal energy of the range.
+
+        Returns:
+            New SPData object with the cropped data.
+        """
         _check_min_max(min_, max_)
         indices = _get_matching_range(self.energy, min_, max_)
         return SPData(self.wavelength[indices], self.counts[:, indices])
 
     def sum_counts_pixel(self, min_: int, max_: int) -> np.ndarray:
+        """Sum all counts up every axes in given range of pixels.
+
+        Args:
+            min_: Minimal pixel of the range.
+            max_: Maximal pixel of the range.
+
+        Returns:
+            Ndarray of the sums.
+        """
         _check_min_max(min_, max_)
         return np.sum(self.counts[:, min_:max_ + 1], axis=1)
 
     def sum_counts_wavelength(self, min_: float, max_: float) -> np.ndarray:
+        """Sum all counts up every axes in given range of wavelength.
+
+        Args:
+            min_: Minimal wavelength of the range.
+            max_: Maximal wavelength of the range.
+
+        Returns:
+            Ndarray of the sums.
+        """
         return np.sum(self.crop_wavelength(min_, max_).counts, axis=1)
 
     def sum_counts_energy(self, min_: float, max_: float) -> np.ndarray:
+        """Sum all counts up every axes in given range of energy.
+
+        Args:
+            min_: Minimal energy of the range.
+            max_: Maximal energy of the range.
+
+        Returns:
+            Ndarray of the sums.
+        """
         return np.sum(self.crop_energy(min_, max_).counts, axis=1)
